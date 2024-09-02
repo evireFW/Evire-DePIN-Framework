@@ -18,7 +18,6 @@ The **Evire-DePIN-Framework** is a suite of tools and smart contracts designed t
 
 - [Node.js](https://nodejs.org/) and npm
 - [Truffle Suite](https://www.trufflesuite.com/)
-- A local blockchain environment (e.g., [Ganache](https://www.trufflesuite.com/ganache)) or a testnet like Rinkeby.
 
 ### Installation
 
