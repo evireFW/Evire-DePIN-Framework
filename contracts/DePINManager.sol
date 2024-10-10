@@ -3,13 +3,19 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract DePINManager is Ownable, Pausable {
+contract DePINManager is Ownable, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
-    using SafeMath for uint256;
+    using EnumerableSet for EnumerableSet.UintSet;
+
+    error CallerNotAssetOwner();
+    error AssetDoesNotExist();
+    error InvalidRecipientAddress();
+    error AssetAlreadyDeactivated();
+    error AssetAlreadyActive();
+    error CallerNotOwnerNorApproved();
 
     struct Asset {
         uint256 id;
@@ -23,6 +29,7 @@ contract DePINManager is Ownable, Pausable {
 
     uint256 private _assetCounter;
     mapping(uint256 => Asset) private _assets;
+    mapping(uint256 => address) private _assetApprovals;
     EnumerableSet.AddressSet private _assetOwners;
     mapping(address => EnumerableSet.UintSet) private _ownerAssets;
 
@@ -31,14 +38,15 @@ contract DePINManager is Ownable, Pausable {
     event AssetTransferred(uint256 indexed assetId, address indexed from, address indexed to);
     event AssetDeactivated(uint256 indexed assetId, address indexed owner);
     event AssetReactivated(uint256 indexed assetId, address indexed owner);
+    event Approval(address indexed owner, address indexed approved, uint256 indexed assetId);
 
     modifier onlyAssetOwner(uint256 assetId) {
-        require(_assets[assetId].owner == msg.sender, "Caller is not the asset owner");
+        if (_assets[assetId].owner != msg.sender) revert CallerNotAssetOwner();
         _;
     }
 
     modifier assetExists(uint256 assetId) {
-        require(_assets[assetId].owner != address(0), "Asset does not exist");
+        if (_assets[assetId].owner == address(0)) revert AssetDoesNotExist();
         _;
     }
 
@@ -47,7 +55,7 @@ contract DePINManager is Ownable, Pausable {
     }
 
     function createAsset(string memory name, string memory metadataURI) external whenNotPaused returns (uint256) {
-        _assetCounter = _assetCounter.add(1);
+        _assetCounter += 1;
         uint256 newAssetId = _assetCounter;
 
         Asset memory newAsset = Asset({
@@ -77,26 +85,41 @@ contract DePINManager is Ownable, Pausable {
         emit AssetUpdated(assetId, metadataURI, msg.sender);
     }
 
-    function transferAsset(uint256 assetId, address to) external whenNotPaused assetExists(assetId) onlyAssetOwner(assetId) {
-        require(to != address(0), "Invalid recipient address");
+    function transferAsset(uint256 assetId, address to) external whenNotPaused assetExists(assetId) nonReentrant {
+        if (to == address(0)) revert InvalidRecipientAddress();
+        address owner = _assets[assetId].owner;
+        if (msg.sender != owner && getApproved(assetId) != msg.sender) revert CallerNotOwnerNorApproved();
+        _transferAsset(assetId, owner, to);
+    }
 
-        address previousOwner = _assets[assetId].owner;
+    function _transferAsset(uint256 assetId, address from, address to) internal {
         _assets[assetId].owner = to;
-        _ownerAssets[previousOwner].remove(assetId);
+        _ownerAssets[from].remove(assetId);
         _ownerAssets[to].add(assetId);
 
-        if (_ownerAssets[previousOwner].length() == 0) {
-            _assetOwners.remove(previousOwner);
+        if (_ownerAssets[from].length() == 0) {
+            _assetOwners.remove(from);
         }
 
         _assetOwners.add(to);
 
-        emit AssetTransferred(assetId, previousOwner, to);
+        _assetApprovals[assetId] = address(0);
+
+        emit AssetTransferred(assetId, from, to);
+    }
+
+    function approve(address to, uint256 assetId) external whenNotPaused assetExists(assetId) onlyAssetOwner(assetId) {
+        _assetApprovals[assetId] = to;
+        emit Approval(msg.sender, to, assetId);
+    }
+
+    function getApproved(uint256 assetId) public view assetExists(assetId) returns (address) {
+        return _assetApprovals[assetId];
     }
 
     function deactivateAsset(uint256 assetId) external whenNotPaused assetExists(assetId) onlyAssetOwner(assetId) {
         Asset storage asset = _assets[assetId];
-        require(asset.active, "Asset is already deactivated");
+        if (!asset.active) revert AssetAlreadyDeactivated();
         asset.active = false;
 
         emit AssetDeactivated(assetId, msg.sender);
@@ -104,7 +127,7 @@ contract DePINManager is Ownable, Pausable {
 
     function reactivateAsset(uint256 assetId) external whenNotPaused assetExists(assetId) onlyAssetOwner(assetId) {
         Asset storage asset = _assets[assetId];
-        require(!asset.active, "Asset is already active");
+        if (asset.active) revert AssetAlreadyActive();
         asset.active = true;
 
         emit AssetReactivated(assetId, msg.sender);
