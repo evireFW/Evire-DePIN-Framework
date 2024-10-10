@@ -4,14 +4,13 @@ pragma solidity ^0.8.17;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract MaintenanceTracking is Ownable, Pausable {
+contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.UintSet;
-    using SafeMath for uint256;
-    using Counters for Counters.Counter;
+
+    // Enum to represent the status of a maintenance request
+    enum RequestStatus { Pending, Approved, InProgress, Completed, Canceled }
 
     // Struct to represent a maintenance request
     struct MaintenanceRequest {
@@ -20,19 +19,22 @@ contract MaintenanceTracking is Ownable, Pausable {
         string description;
         address requester;
         uint256 timestamp;
-        bool completed;
         uint256 cost;
         address approvedBy;
+        address serviceProvider;
+        RequestStatus status;
     }
 
     // Events
     event MaintenanceRequested(uint256 indexed requestId, uint256 indexed assetId, address indexed requester, string description);
-    event MaintenanceCompleted(uint256 indexed requestId, uint256 cost, address indexed approvedBy);
-    event MaintenanceApproved(uint256 indexed requestId, address indexed approvedBy, uint256 cost);
+    event MaintenanceApproved(uint256 indexed requestId, address indexed approvedBy, uint256 cost, address serviceProvider);
+    event MaintenanceStarted(uint256 indexed requestId, address indexed serviceProvider);
+    event MaintenanceCompleted(uint256 indexed requestId, uint256 cost, address indexed approvedBy, address indexed serviceProvider);
     event MaintenanceCanceled(uint256 indexed requestId, address indexed requester);
+    event MaintenanceRejected(uint256 indexed requestId, address indexed rejectedBy);
     
-    // Counters
-    Counters.Counter private _requestCounter;
+    // Counter for request IDs
+    uint256 private _requestCounter;
     
     // Maintenance requests by their ID
     mapping(uint256 => MaintenanceRequest) private _requests;
@@ -40,13 +42,10 @@ contract MaintenanceTracking is Ownable, Pausable {
     // Active requests for an asset
     mapping(uint256 => EnumerableSet.UintSet) private _activeRequestsByAsset;
 
-    // Approved maintenance budget
-    mapping(address => uint256) private _approvedBudget;
-
     // Function to request maintenance for an asset
     function requestMaintenance(uint256 assetId, string calldata description) external whenNotPaused returns (uint256) {
-        _requestCounter.increment();
-        uint256 requestId = _requestCounter.current();
+        _requestCounter++;
+        uint256 requestId = _requestCounter;
 
         _requests[requestId] = MaintenanceRequest({
             id: requestId,
@@ -54,9 +53,10 @@ contract MaintenanceTracking is Ownable, Pausable {
             description: description,
             requester: msg.sender,
             timestamp: block.timestamp,
-            completed: false,
             cost: 0,
-            approvedBy: address(0)
+            approvedBy: address(0),
+            serviceProvider: address(0),
+            status: RequestStatus.Pending
         });
 
         _activeRequestsByAsset[assetId].add(requestId);
@@ -66,42 +66,68 @@ contract MaintenanceTracking is Ownable, Pausable {
     }
 
     // Function to approve a maintenance request
-    function approveMaintenance(uint256 requestId, uint256 cost) external onlyOwner whenNotPaused {
+    function approveMaintenance(uint256 requestId, uint256 cost, address serviceProvider) external onlyOwner whenNotPaused {
         MaintenanceRequest storage request = _requests[requestId];
-        require(!request.completed, "MaintenanceTracking: Request already completed");
-        require(request.approvedBy == address(0), "MaintenanceTracking: Request already approved");
+        require(request.status == RequestStatus.Pending, "MaintenanceTracking: Request not pending or already approved");
 
         request.cost = cost;
         request.approvedBy = msg.sender;
+        request.serviceProvider = serviceProvider;
+        request.status = RequestStatus.Approved;
 
-        _approvedBudget[request.requester] = _approvedBudget[request.requester].add(cost);
-
-        emit MaintenanceApproved(requestId, msg.sender, cost);
+        emit MaintenanceApproved(requestId, msg.sender, cost, serviceProvider);
     }
 
-    // Function to mark a maintenance request as completed
-    function completeMaintenance(uint256 requestId) external whenNotPaused {
+    // Function for service provider to start maintenance
+    function startMaintenance(uint256 requestId) external whenNotPaused {
         MaintenanceRequest storage request = _requests[requestId];
-        require(request.approvedBy != address(0), "MaintenanceTracking: Request not approved");
-        require(!request.completed, "MaintenanceTracking: Request already completed");
-        require(msg.sender == request.requester || msg.sender == owner(), "MaintenanceTracking: Only requester or owner can complete");
+        require(request.serviceProvider == msg.sender, "MaintenanceTracking: Only assigned service provider can start maintenance");
+        require(request.status == RequestStatus.Approved, "MaintenanceTracking: Request not approved or already started");
 
-        request.completed = true;
+        request.status = RequestStatus.InProgress;
+
+        emit MaintenanceStarted(requestId, msg.sender);
+    }
+
+    // Function for service provider to mark maintenance as completed and receive payment
+    function completeMaintenance(uint256 requestId) external whenNotPaused nonReentrant {
+        MaintenanceRequest storage request = _requests[requestId];
+        require(request.status == RequestStatus.InProgress, "MaintenanceTracking: Maintenance not in progress");
+        require(request.serviceProvider == msg.sender, "MaintenanceTracking: Only assigned service provider can complete maintenance");
+
+        request.status = RequestStatus.Completed;
         _activeRequestsByAsset[request.assetId].remove(requestId);
 
-        emit MaintenanceCompleted(requestId, request.cost, request.approvedBy);
+        // Transfer funds to serviceProvider
+        if (request.cost > 0) {
+            require(address(this).balance >= request.cost, "MaintenanceTracking: Insufficient contract balance");
+            payable(request.serviceProvider).transfer(request.cost);
+        }
+
+        emit MaintenanceCompleted(requestId, request.cost, request.approvedBy, msg.sender);
     }
 
     // Function to cancel a maintenance request
     function cancelMaintenance(uint256 requestId) external whenNotPaused {
         MaintenanceRequest storage request = _requests[requestId];
         require(request.requester == msg.sender, "MaintenanceTracking: Only requester can cancel");
-        require(!request.completed, "MaintenanceTracking: Cannot cancel a completed request");
+        require(request.status == RequestStatus.Pending || request.status == RequestStatus.Approved, "MaintenanceTracking: Cannot cancel a request that is in progress or completed");
 
+        request.status = RequestStatus.Canceled;
         _activeRequestsByAsset[request.assetId].remove(requestId);
-        delete _requests[requestId];
 
         emit MaintenanceCanceled(requestId, msg.sender);
+    }
+
+    // Function to reject a maintenance request
+    function rejectMaintenance(uint256 requestId) external onlyOwner whenNotPaused {
+        MaintenanceRequest storage request = _requests[requestId];
+        require(request.status == RequestStatus.Pending, "MaintenanceTracking: Can only reject pending requests");
+
+        request.status = RequestStatus.Canceled;
+        _activeRequestsByAsset[request.assetId].remove(requestId);
+
+        emit MaintenanceRejected(requestId, msg.sender);
     }
 
     // Function to get the details of a maintenance request
@@ -116,7 +142,7 @@ contract MaintenanceTracking is Ownable, Pausable {
 
     // Function to get the total number of maintenance requests
     function totalRequests() external view returns (uint256) {
-        return _requestCounter.current();
+        return _requestCounter;
     }
 
     // Function to pause the contract (onlyOwner)
@@ -130,11 +156,12 @@ contract MaintenanceTracking is Ownable, Pausable {
     }
 
     // Function to withdraw funds (onlyOwner)
-    function withdrawFunds(address token, address to, uint256 amount) external onlyOwner {
-        if (token == address(0)) {
-            payable(to).transfer(amount);
-        } else {
-            IERC20(token).transfer(to, amount);
-        }
+    function withdrawFunds(address to, uint256 amount) external onlyOwner nonReentrant {
+        require(address(this).balance >= amount, "MaintenanceTracking: Insufficient balance");
+        payable(to).transfer(amount);
     }
+
+    // Fallback function to receive Ether
+    receive() external payable {}
+    fallback() external payable {}
 }
