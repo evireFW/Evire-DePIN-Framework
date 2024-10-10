@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.0; // You could update to a more recent version if desired
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract OracleIntegration is Ownable {
-    using SafeMath for uint256;
+contract OracleIntegration is Ownable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     struct OracleData {
@@ -21,13 +20,19 @@ contract OracleIntegration is Ownable {
     uint256 public updateInterval;
     uint256 public lastUpdateTime;
     uint256 public tolerance;
+    int256 public currentValue;
+    uint8 public decimals = 18; // Standard decimals for normalization
 
     event OracleAdded(address oracleAddress, address aggregator, uint8 decimals);
     event OracleRemoved(address oracleAddress);
+    event OracleUpdated(address oracleAddress, address newAggregator, uint8 newDecimals);
     event UpdateIntervalChanged(uint256 newInterval);
     event ToleranceChanged(uint256 newTolerance);
+    event DataUpdated(int256 newValue);
+    event DataOutOfTolerance(int256 currentValue, int256 newValue);
 
     constructor(uint256 _updateInterval, uint256 _tolerance) {
+        require(_tolerance <= uint256(type(int256).max), "Tolerance too high");
         updateInterval = _updateInterval;
         tolerance = _tolerance;
         lastUpdateTime = block.timestamp;
@@ -38,20 +43,21 @@ contract OracleIntegration is Ownable {
         _;
     }
 
-    function addOracle(address oracleAddress, address aggregator, uint8 decimals) external onlyOwner {
+    function addOracle(address oracleAddress, address aggregator, uint8 _decimals) external onlyOwner {
         require(oracleAddress != address(0), "Invalid oracle address");
         require(aggregator != address(0), "Invalid aggregator address");
         require(!oracleAddresses.contains(oracleAddress), "Oracle already exists");
+        require(_decimals <= 77, "Decimals too high");
 
         oracles[oracleAddress] = OracleData({
             isActive: true,
             aggregator: AggregatorV3Interface(aggregator),
-            decimals: decimals
+            decimals: _decimals
         });
 
         oracleAddresses.add(oracleAddress);
 
-        emit OracleAdded(oracleAddress, aggregator, decimals);
+        emit OracleAdded(oracleAddress, aggregator, _decimals);
     }
 
     function removeOracle(address oracleAddress) external onlyOwner {
@@ -63,6 +69,18 @@ contract OracleIntegration is Ownable {
         emit OracleRemoved(oracleAddress);
     }
 
+    function updateOracle(address oracleAddress, address newAggregator, uint8 newDecimals) external onlyOwner {
+        require(oracleAddresses.contains(oracleAddress), "Oracle does not exist");
+        require(newAggregator != address(0), "Invalid aggregator address");
+        require(newDecimals <= 77, "Decimals too high");
+
+        OracleData storage oracle = oracles[oracleAddress];
+        oracle.aggregator = AggregatorV3Interface(newAggregator);
+        oracle.decimals = newDecimals;
+
+        emit OracleUpdated(oracleAddress, newAggregator, newDecimals);
+    }
+
     function setUpdateInterval(uint256 newInterval) external onlyOwner {
         require(newInterval > 0, "Update interval must be greater than zero");
         updateInterval = newInterval;
@@ -71,6 +89,7 @@ contract OracleIntegration is Ownable {
 
     function setTolerance(uint256 newTolerance) external onlyOwner {
         require(newTolerance > 0, "Tolerance must be greater than zero");
+        require(newTolerance <= uint256(type(int256).max), "Tolerance too high");
         tolerance = newTolerance;
         emit ToleranceChanged(newTolerance);
     }
@@ -85,33 +104,47 @@ contract OracleIntegration is Ownable {
             OracleData storage oracle = oracles[oracleAddresses.at(i)];
             if (oracle.isActive) {
                 (, int256 price, , , ) = oracle.aggregator.latestRoundData();
-                aggregatedValue = aggregatedValue.add(price.div(int256(10 ** oracle.decimals)));
+                int256 adjustedPrice = scalePrice(price, oracle.decimals, decimals);
+                aggregatedValue += adjustedPrice;
                 activeOracles++;
             }
         }
 
         require(activeOracles > 0, "No active oracles found");
-        return aggregatedValue.div(int256(activeOracles));
+        int256 averagePrice = aggregatedValue / int256(activeOracles);
+        return averagePrice;
     }
 
-    function updateData() external onlyOracle {
-        require(block.timestamp >= lastUpdateTime.add(updateInterval), "Update interval not reached");
+    function scalePrice(int256 _price, uint8 _priceDecimals, uint8 _decimals) internal pure returns (int256) {
+        if (_priceDecimals < _decimals) {
+            return _price * int256(10 ** uint256(_decimals - _priceDecimals));
+        } else if (_priceDecimals > _decimals) {
+            return _price / int256(10 ** uint256(_priceDecimals - _decimals));
+        } else {
+            return _price;
+        }
+    }
+
+    function updateData() external onlyOracle nonReentrant {
+        require(block.timestamp >= lastUpdateTime + updateInterval, "Update interval not reached");
 
         int256 latestValue = getLatestData();
-        // The following logic assumes an existing `currentValue` state variable
-        // that tracks the current value and updates only if within tolerance
-		// TODO: logic
-        int256 currentValue = latestValue; 
 
-        if (latestValue < currentValue.sub(int256(tolerance)) || latestValue > currentValue.add(int256(tolerance))) {
-            // Logic for handling data outside the tolerance range
-        } else {
-            // Logic for handling data within the tolerance range
+        if (currentValue == 0) {
+            // Initialize currentValue if not set
             currentValue = latestValue;
+            emit DataUpdated(currentValue);
+        } else if (latestValue < currentValue - int256(tolerance) || latestValue > currentValue + int256(tolerance)) {
+            // Data is outside tolerance range
+            emit DataOutOfTolerance(currentValue, latestValue);
+            // You might decide to reject the update or accept it; here we choose to reject
+        } else {
+            // Data is within tolerance range
+            currentValue = latestValue;
+            emit DataUpdated(currentValue);
         }
 
         lastUpdateTime = block.timestamp;
-        // Additional logic for persisting updated values or triggering events can be added here
     }
 
     function isOracle(address oracleAddress) public view returns (bool) {
@@ -122,12 +155,16 @@ contract OracleIntegration is Ownable {
         return oracleAddresses.length();
     }
 
-    function getOracleDetails(address oracleAddress) public view returns (address aggregator, uint8 decimals, bool isActive) {
+    function getOracleDetails(address oracleAddress) public view returns (address aggregator, uint8 _decimals, bool isActive) {
         OracleData storage oracle = oracles[oracleAddress];
         return (address(oracle.aggregator), oracle.decimals, oracle.isActive);
     }
 
     function getAggregatedOracleData() external view returns (int256) {
         return getLatestData();
+    }
+
+    function getOracleAddresses() external view returns (address[] memory) {
+        return oracleAddresses.values();
     }
 }
