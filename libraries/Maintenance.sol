@@ -17,6 +17,7 @@ library Maintenance {
         uint256 lastPerformed;
         uint256 nextScheduled;
         MaintenanceRecord[] records;
+        bool exists;
     }
 
     struct MaintenanceManager {
@@ -37,34 +38,46 @@ library Maintenance {
         address performedBy
     );
 
+    function createMaintenanceSchedule(
+        MaintenanceManager storage self,
+        uint256 assetId,
+        uint256 interval
+    ) public {
+        MaintenanceSchedule storage schedule = self.schedules[assetId];
+        require(!schedule.exists, "Schedule already exists");
+        schedule.assetId = assetId;
+        schedule.interval = interval;
+        schedule.exists = true;
+    }
+
     function scheduleMaintenance(
         MaintenanceManager storage self,
         uint256 assetId,
         string memory description,
-        uint256 interval
+        uint256 scheduledTimestamp
     ) public returns (uint256) {
+        require(scheduledTimestamp > block.timestamp, "Scheduled time must be in the future");
+
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        schedule.assetId = assetId;
-        schedule.interval = interval;
-        schedule.lastPerformed = block.timestamp;
-        schedule.nextScheduled = block.timestamp + interval;
+        require(schedule.exists, "Asset does not exist");
 
         uint256 maintenanceId = self.nextMaintenanceId++;
         MaintenanceRecord memory newRecord = MaintenanceRecord({
             id: maintenanceId,
             description: description,
-            scheduledTimestamp: schedule.nextScheduled,
+            scheduledTimestamp: scheduledTimestamp,
             completedTimestamp: 0,
             performedBy: address(0),
             isCompleted: false
         });
 
         schedule.records.push(newRecord);
+        schedule.nextScheduled = scheduledTimestamp;
 
         emit MaintenanceScheduled(
             assetId,
             maintenanceId,
-            schedule.nextScheduled
+            scheduledTimestamp
         );
 
         return maintenanceId;
@@ -77,13 +90,14 @@ library Maintenance {
         address performedBy
     ) public {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        require(schedule.assetId != 0, "Asset does not exist");
+        require(schedule.exists, "Asset does not exist");
         require(
             maintenanceId < schedule.records.length,
             "Invalid maintenance ID"
         );
         MaintenanceRecord storage record = schedule.records[maintenanceId];
         require(!record.isCompleted, "Maintenance already completed");
+        require(block.timestamp >= record.scheduledTimestamp, "Maintenance not yet due");
 
         record.completedTimestamp = block.timestamp;
         record.performedBy = performedBy;
@@ -103,17 +117,42 @@ library Maintenance {
     function getNextScheduledMaintenance(
         MaintenanceManager storage self,
         uint256 assetId
-    ) public view returns (uint256, uint256) {
+    ) public view returns (uint256 nextScheduled, uint256 interval) {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
+        require(schedule.exists, "Asset does not exist");
         return (schedule.nextScheduled, schedule.interval);
+    }
+
+    function getMaintenanceRecordCount(
+        MaintenanceManager storage self,
+        uint256 assetId
+    ) public view returns (uint256) {
+        MaintenanceSchedule storage schedule = self.schedules[assetId];
+        require(schedule.exists, "Asset does not exist");
+        return schedule.records.length;
     }
 
     function getMaintenanceHistory(
         MaintenanceManager storage self,
-        uint256 assetId
+        uint256 assetId,
+        uint256 startIndex,
+        uint256 count
     ) public view returns (MaintenanceRecord[] memory) {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        return schedule.records;
+        require(schedule.exists, "Asset does not exist");
+        uint256 totalRecords = schedule.records.length;
+        require(startIndex < totalRecords, "Start index out of bounds");
+
+        uint256 endIndex = startIndex + count;
+        if (endIndex > totalRecords) {
+            endIndex = totalRecords;
+        }
+        uint256 resultCount = endIndex - startIndex;
+        MaintenanceRecord[] memory result = new MaintenanceRecord[](resultCount);
+        for (uint256 i = 0; i < resultCount; i++) {
+            result[i] = schedule.records[startIndex + i];
+        }
+        return result;
     }
 
     function getMaintenanceRecord(
@@ -122,7 +161,7 @@ library Maintenance {
         uint256 maintenanceId
     ) public view returns (MaintenanceRecord memory) {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        require(schedule.assetId != 0, "Asset does not exist");
+        require(schedule.exists, "Asset does not exist");
         require(
             maintenanceId < schedule.records.length,
             "Invalid maintenance ID"
@@ -136,7 +175,8 @@ library Maintenance {
         uint256 newInterval
     ) public {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        require(schedule.assetId != 0, "Asset does not exist");
+        require(schedule.exists, "Asset does not exist");
+        require(newInterval > 0, "Interval must be positive");
         schedule.interval = newInterval;
         schedule.nextScheduled = block.timestamp + newInterval;
     }
@@ -146,6 +186,7 @@ library Maintenance {
         uint256 assetId
     ) public view returns (bool) {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
+        require(schedule.exists, "Asset does not exist");
         return block.timestamp >= schedule.nextScheduled;
     }
 
@@ -155,16 +196,18 @@ library Maintenance {
         uint256 maintenanceId
     ) public {
         MaintenanceSchedule storage schedule = self.schedules[assetId];
-        require(schedule.assetId != 0, "Asset does not exist");
+        require(schedule.exists, "Asset does not exist");
         require(
             maintenanceId < schedule.records.length,
             "Invalid maintenance ID"
         );
-        MaintenanceRecord[] storage records = schedule.records;
+        MaintenanceRecord storage record = schedule.records[maintenanceId];
+        require(!record.isCompleted, "Cannot remove completed maintenance");
 
-        for (uint256 i = maintenanceId; i < records.length - 1; i++) {
-            records[i] = records[i + 1];
+        uint256 lastIndex = schedule.records.length - 1;
+        if (maintenanceId != lastIndex) {
+            schedule.records[maintenanceId] = schedule.records[lastIndex];
         }
-        records.pop();
+        schedule.records.pop();
     }
 }
