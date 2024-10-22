@@ -24,7 +24,7 @@ The **Evire-DePIN-Framework** is a suite of tools and smart contracts designed t
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/yourusername/Evire-DePIN-Framework.git
+    git clone https://github.com/evireFW/Evire-DePIN-Framework.git
     cd Evire-DePIN-Framework
     ```
 

@@ -1,0 +1,32 @@
+{
+    "name": "evire-depin-framework",
+    "version": "0.1.0",
+    "description": "The Evire-DePIN-Framework is a suite of tools and smart contracts designed to facilitate the development, deployment and management of decentralized physical infrastructure networks (DePIN) on the Evire blockchain.",
+    "main": "index.js",
+    "files": [
+        "/contracts",
+        "/libraries",
+        "index.js"
+    ],
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "prepare": "npm run compile",
+        "compile": "truffle compile"
+    },
+    "keywords": [
+        "solidity",
+        "ethereum",
+        "smart-contracts",
+        "depin",
+        "evire"
+    ],
+    "author": "Evire Team",
+    "license": "MIT",
+    "dependencies": {
+        "@chainlink/contracts": "^0.8.0",
+        "@openzeppelin/contracts": "^4.8.0"
+    },
+    "devDependencies": {
+        "truffle": "^5.7.0"
+    }
+}
