@@ -49,7 +49,8 @@ contract DePINManager is Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address initialOwner) Ownable(initialOwner) {
+    constructor(address initialOwner) Ownable() {
+        transferOwnership(initialOwner);
         _assetCounter = 0;
     }
 
