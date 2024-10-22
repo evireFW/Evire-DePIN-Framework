@@ -2,12 +2,19 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-contract DePINManager is Ownable, ReentrancyGuard {
+contract DePINManager is Ownable, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
     using EnumerableSet for EnumerableSet.UintSet;
+
+    constructor() {
+        // The deployer will be set as the owner automatically
+    }
+
+
 
     error CallerNotAssetOwner();
     error AssetDoesNotExist();
@@ -47,11 +54,6 @@ contract DePINManager is Ownable, ReentrancyGuard {
     modifier assetExists(uint256 assetId) {
         if (_assets[assetId].owner == address(0)) revert AssetDoesNotExist();
         _;
-    }
-
-    constructor(address initialOwner) Ownable() {
-        transferOwnership(initialOwner);
-        _assetCounter = 0;
     }
 
     function createAsset(string memory name, string memory metadataURI) external returns (uint256) {
