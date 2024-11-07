@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract OracleIntegration is Ownable, ReentrancyGuard {
+contract OracleIntegration is Ownable(msg.sender), ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     struct OracleData {

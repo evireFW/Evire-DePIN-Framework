@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -83,13 +83,13 @@ contract ResourceManagement is AccessControl, ReentrancyGuard {
         _;
     }
 
-    constructor(address admin) {
+     constructor(address admin) {
         require(
             admin != address(0),
             "ResourceManagement: Admin address cannot be zero"
         );
-        _setupRole(DEFAULT_ADMIN_ROLE, admin);
-        _setupRole(ADMIN_ROLE, admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ADMIN_ROLE, admin);
         _setRoleAdmin(RESOURCE_MANAGER_ROLE, ADMIN_ROLE);
         resourceCount = 0;
         allocationRequestCount = 0;

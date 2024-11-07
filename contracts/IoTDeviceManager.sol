@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
+    // Define role identifiers
     bytes32 public constant DEVICE_MANAGER_ROLE = keccak256("DEVICE_MANAGER_ROLE");
     bytes32 public constant DATA_CONSUMER_ROLE = keccak256("DATA_CONSUMER_ROLE");
 
@@ -49,12 +50,14 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         _;
     }
 
-    constructor() {
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(DEVICE_MANAGER_ROLE, msg.sender);
-        _setupRole(DATA_CONSUMER_ROLE, msg.sender);
+    constructor(address initialOwner) Ownable(initialOwner) {
+        // Grant roles to the initial owner
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(DEVICE_MANAGER_ROLE, initialOwner);
+        _grantRole(DATA_CONSUMER_ROLE, initialOwner);
     }
 
+    // Function to register a new device
     function registerDevice(
         address _deviceAddress,
         string memory _deviceId,
@@ -76,6 +79,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         emit DeviceRegistered(_deviceAddress, _deviceId, _metadataURI);
     }
 
+    // Function to deactivate a device
     function deactivateDevice(address _deviceAddress) external {
         require(registeredDevices.contains(_deviceAddress), "Device not registered");
         require(
@@ -89,6 +93,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         emit DeviceDeactivated(_deviceAddress, devices[_deviceAddress].deviceId);
     }
 
+    // Function to reactivate a device
     function reactivateDevice(address _deviceAddress) external {
         require(!registeredDevices.contains(_deviceAddress), "Device is already active");
         require(
@@ -103,6 +108,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         emit DeviceReactivated(_deviceAddress, devices[_deviceAddress].deviceId);
     }
 
+    // Function for devices to submit data
     function submitData(string memory _dataHash) external onlyActiveDevice(msg.sender) {
         require(bytes(_dataHash).length > 0, "Data hash cannot be empty");
 
@@ -117,6 +123,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         emit DataSubmitted(msg.sender, _dataHash, block.timestamp);
     }
 
+    // Function for data consumers to get device data
     function getDeviceData(address _deviceAddress, uint256 _index)
         external
         view
@@ -130,6 +137,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         return (dataPoint.timestamp, dataPoint.dataHash);
     }
 
+    // Function to get the number of data points for a device
     function getDeviceDataLength(address _deviceAddress)
         external
         view
@@ -140,12 +148,13 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         return deviceData[_deviceAddress].length;
     }
 
+    // Function to get device details
     function getDeviceDetails(address _deviceAddress)
         external
         view
         returns (string memory, address, bool, string memory, uint256)
     {
-        require(registeredDevices.contains(_deviceAddress), "Device not registered");
+        require(devices[_deviceAddress].owner != address(0), "Device not registered");
 
         Device memory device = devices[_deviceAddress];
         return (
@@ -157,6 +166,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         );
     }
 
+    // Function to update device metadata
     function updateDeviceMetadata(address _deviceAddress, string memory _metadataURI)
         external
         onlyActiveDevice(_deviceAddress)
@@ -167,6 +177,7 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         devices[_deviceAddress].metadataURI = _metadataURI;
     }
 
+    // Function to transfer device ownership
     function transferDeviceOwnership(address _deviceAddress, address _newOwner)
         external
         onlyActiveDevice(_deviceAddress)
@@ -178,23 +189,28 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         emit DeviceOwnershipTransferred(_deviceAddress, _newOwner);
     }
 
+    // Function to get all registered devices
     function getRegisteredDevices() external view returns (address[] memory) {
         return registeredDevices.values();
     }
 
+    // Function to get the total number of registered devices
     function totalRegisteredDevices() external view returns (uint256) {
         return registeredDevices.length();
     }
 
+    // Function to check if a device is active
     function isDeviceActive(address _deviceAddress) external view returns (bool) {
         return devices[_deviceAddress].active;
     }
 
+    // Function to get the last data submission timestamp for a device
     function getLastDataTimestamp(address _deviceAddress) external view returns (uint256) {
-        require(registeredDevices.contains(_deviceAddress), "Device not registered");
+        require(devices[_deviceAddress].owner != address(0), "Device not registered");
         return devices[_deviceAddress].lastDataTimestamp;
     }
 
+    // Function to withdraw tokens (onlyOwner)
     function withdrawTokens(address _token, address _to, uint256 _amount) external onlyOwner nonReentrant {
         require(_token != address(0), "Token address cannot be zero");
         require(_to != address(0), "Recipient address cannot be zero");
@@ -202,18 +218,22 @@ contract IoTDeviceManager is Ownable, AccessControl, ReentrancyGuard {
         IERC20(_token).transfer(_to, _amount);
     }
 
+    // Function to grant DEVICE_MANAGER_ROLE to an account
     function grantManagerRole(address _account) external onlyOwner {
         grantRole(DEVICE_MANAGER_ROLE, _account);
     }
 
+    // Function to revoke DEVICE_MANAGER_ROLE from an account
     function revokeManagerRole(address _account) external onlyOwner {
         revokeRole(DEVICE_MANAGER_ROLE, _account);
     }
 
+    // Function to grant DATA_CONSUMER_ROLE to an account
     function grantDataConsumerRole(address _account) external onlyOwner {
         grantRole(DATA_CONSUMER_ROLE, _account);
     }
 
+    // Function to revoke DATA_CONSUMER_ROLE from an account
     function revokeDataConsumerRole(address _account) external onlyOwner {
         revokeRole(DATA_CONSUMER_ROLE, _account);
     }

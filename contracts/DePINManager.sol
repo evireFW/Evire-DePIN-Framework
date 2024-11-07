@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
@@ -55,8 +55,9 @@ contract DePINManager is Ownable, Pausable, ReentrancyGuard {
         _;
     }
 
-    constructor() Ownable(msg.sender) {
-        // The deployer is set as the owner by default
+    constructor(address initialOwner) Ownable() {
+        transferOwnership(initialOwner);
+        _assetCounter = 0;
     }
 
     function pause() external onlyOwner {

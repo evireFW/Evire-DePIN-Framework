@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract ResourceAllocation is Ownable, ReentrancyGuard {
+contract ResourceAllocation is Ownable(msg.sender), ReentrancyGuard {
     struct Resource {
         uint256 allocatedAmount;
     }

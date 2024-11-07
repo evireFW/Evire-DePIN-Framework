@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
+contract MaintenanceTracking is Ownable(msg.sender), Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.UintSet;
 
     // Enum to represent the status of a maintenance request
@@ -29,9 +29,11 @@ contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
     event MaintenanceRequested(uint256 indexed requestId, uint256 indexed assetId, address indexed requester, string description);
     event MaintenanceApproved(uint256 indexed requestId, address indexed approvedBy, uint256 cost, address serviceProvider);
     event MaintenanceStarted(uint256 indexed requestId, address indexed serviceProvider);
-    event MaintenanceCompleted(uint256 indexed requestId, uint256 cost, address indexed approvedBy, address indexed serviceProvider);
+    event MaintenanceCompleted(uint256 indexed requestId, uint256 cost, address indexed serviceProvider);
     event MaintenanceCanceled(uint256 indexed requestId, address indexed requester);
     event MaintenanceRejected(uint256 indexed requestId, address indexed rejectedBy);
+    event FundsWithdrawn(address indexed to, uint256 amount);
+    event FundsReceived(address indexed from, uint256 amount);
     
     // Counter for request IDs
     uint256 private _requestCounter;
@@ -44,6 +46,8 @@ contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
 
     // Function to request maintenance for an asset
     function requestMaintenance(uint256 assetId, string calldata description) external whenNotPaused returns (uint256) {
+        require(bytes(description).length > 0, "MaintenanceTracking: Description cannot be empty");
+
         _requestCounter++;
         uint256 requestId = _requestCounter;
 
@@ -67,6 +71,8 @@ contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
 
     // Function to approve a maintenance request
     function approveMaintenance(uint256 requestId, uint256 cost, address serviceProvider) external onlyOwner whenNotPaused {
+        require(serviceProvider != address(0), "MaintenanceTracking: Service provider cannot be zero address");
+
         MaintenanceRequest storage request = _requests[requestId];
         require(request.status == RequestStatus.Pending, "MaintenanceTracking: Request not pending or already approved");
 
@@ -95,23 +101,28 @@ contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
         require(request.status == RequestStatus.InProgress, "MaintenanceTracking: Maintenance not in progress");
         require(request.serviceProvider == msg.sender, "MaintenanceTracking: Only assigned service provider can complete maintenance");
 
+        // Update state before external call
         request.status = RequestStatus.Completed;
         _activeRequestsByAsset[request.assetId].remove(requestId);
 
         // Transfer funds to serviceProvider
         if (request.cost > 0) {
             require(address(this).balance >= request.cost, "MaintenanceTracking: Insufficient contract balance");
-            payable(request.serviceProvider).transfer(request.cost);
+            (bool success, ) = request.serviceProvider.call{value: request.cost}("");
+            require(success, "MaintenanceTracking: Transfer failed");
         }
 
-        emit MaintenanceCompleted(requestId, request.cost, request.approvedBy, msg.sender);
+        emit MaintenanceCompleted(requestId, request.cost, msg.sender);
     }
 
     // Function to cancel a maintenance request
     function cancelMaintenance(uint256 requestId) external whenNotPaused {
         MaintenanceRequest storage request = _requests[requestId];
         require(request.requester == msg.sender, "MaintenanceTracking: Only requester can cancel");
-        require(request.status == RequestStatus.Pending || request.status == RequestStatus.Approved, "MaintenanceTracking: Cannot cancel a request that is in progress or completed");
+        require(
+            request.status == RequestStatus.Pending || request.status == RequestStatus.Approved,
+            "MaintenanceTracking: Cannot cancel a request that is in progress or completed"
+        );
 
         request.status = RequestStatus.Canceled;
         _activeRequestsByAsset[request.assetId].remove(requestId);
@@ -157,11 +168,20 @@ contract MaintenanceTracking is Ownable, Pausable, ReentrancyGuard {
 
     // Function to withdraw funds (onlyOwner)
     function withdrawFunds(address to, uint256 amount) external onlyOwner nonReentrant {
+        require(to != address(0), "MaintenanceTracking: Recipient cannot be zero address");
         require(address(this).balance >= amount, "MaintenanceTracking: Insufficient balance");
-        payable(to).transfer(amount);
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "MaintenanceTracking: Withdrawal failed");
+
+        emit FundsWithdrawn(to, amount);
     }
 
     // Fallback function to receive Ether
-    receive() external payable {}
-    fallback() external payable {}
+    receive() external payable {
+        emit FundsReceived(msg.sender, msg.value);
+    }
+
+    fallback() external payable {
+        emit FundsReceived(msg.sender, msg.value);
+    }
 }
