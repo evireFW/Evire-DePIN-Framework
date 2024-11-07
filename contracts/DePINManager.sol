@@ -2,8 +2,8 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 contract DePINManager is Ownable, Pausable, ReentrancyGuard {
@@ -55,9 +55,8 @@ contract DePINManager is Ownable, Pausable, ReentrancyGuard {
         _;
     }
 
-    constructor(address initialOwner) Ownable() {
-        transferOwnership(initialOwner);
-        _assetCounter = 0;
+    constructor(address initialOwner) Ownable(initialOwner) {
+        _transferOwnership(initialOwner);
     }
 
     function pause() external onlyOwner {
