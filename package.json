@@ -1,5 +1,5 @@
 {
-    "name": "evire-depin-framework",
+    "name": "@evire/depin-framework",
     "version": "0.1.3",
     "description": "The Evire-DePIN-Framework is a suite of tools and smart contracts designed to facilitate the development, deployment and management of decentralized physical infrastructure networks (DePIN) on the Evire blockchain.",
     "main": "index.js",
